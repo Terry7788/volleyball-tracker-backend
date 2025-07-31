@@ -41,6 +41,13 @@ public class Match {
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
     
+    // NEW FIELDS FOR UNDO TRACKING
+    @Column
+    private String lastScoringTeam; // "team1" or "team2" - tracks who scored the last point
+    
+    @Column
+    private LocalDateTime lastScoreTime; // When the last point was scored
+    
     @OneToMany(mappedBy = "match", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JsonManagedReference
     private List<SetScore> sets = new ArrayList<>();
@@ -143,6 +150,23 @@ public class Match {
     
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+    
+    // NEW GETTERS AND SETTERS FOR UNDO TRACKING
+    public String getLastScoringTeam() {
+        return lastScoringTeam;
+    }
+    
+    public void setLastScoringTeam(String lastScoringTeam) {
+        this.lastScoringTeam = lastScoringTeam;
+    }
+    
+    public LocalDateTime getLastScoreTime() {
+        return lastScoreTime;
+    }
+    
+    public void setLastScoreTime(LocalDateTime lastScoreTime) {
+        this.lastScoreTime = lastScoreTime;
     }
     
     public List<SetScore> getSets() {
