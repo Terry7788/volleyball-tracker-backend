@@ -41,23 +41,19 @@ public class Match {
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
-    
-@Column
-private Boolean undoUsed = false; // Tracks if undo was used for the current state
-
-// Add getter and setter:
-public Boolean getUndoUsed() {
-    return undoUsed;
-}
-
-public void setUndoUsed(Boolean undoUsed) {
-    this.undoUsed = undoUsed;
-}
-
-    
-    // NEW FIELDS FOR UNDO TRACKING
     @Column
-    private String lastScoringTeam; // "team1" or "team2" - tracks who scored the last point
+    private Boolean undoUsed = false; // Tracks if undo was used for the current state
+
+    // NEW FIELDS FOR STORING PREVIOUS SCORES (for edit undo functionality)
+    @Column
+    private Integer previousTeam1Score; // Store previous team1 score before edit
+    
+    @Column
+    private Integer previousTeam2Score; // Store previous team2 score before edit
+    
+    // EXISTING FIELDS FOR UNDO TRACKING
+    @Column
+    private String lastScoringTeam; // "team1", "team2", or "EDIT_OPERATION" - tracks who scored the last point
     
     @Column
     private LocalDateTime lastScoreTime; // When the last point was scored
@@ -165,8 +161,34 @@ public void setUndoUsed(Boolean undoUsed) {
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
+
+    // Getter and setter for undoUsed
+    public Boolean getUndoUsed() {
+        return undoUsed;
+    }
+
+    public void setUndoUsed(Boolean undoUsed) {
+        this.undoUsed = undoUsed;
+    }
+
+    // NEW GETTERS AND SETTERS FOR PREVIOUS SCORES
+    public Integer getPreviousTeam1Score() {
+        return previousTeam1Score;
+    }
     
-    // NEW GETTERS AND SETTERS FOR UNDO TRACKING
+    public void setPreviousTeam1Score(Integer previousTeam1Score) {
+        this.previousTeam1Score = previousTeam1Score;
+    }
+    
+    public Integer getPreviousTeam2Score() {
+        return previousTeam2Score;
+    }
+    
+    public void setPreviousTeam2Score(Integer previousTeam2Score) {
+        this.previousTeam2Score = previousTeam2Score;
+    }
+    
+    // EXISTING GETTERS AND SETTERS FOR UNDO TRACKING
     public String getLastScoringTeam() {
         return lastScoringTeam;
     }

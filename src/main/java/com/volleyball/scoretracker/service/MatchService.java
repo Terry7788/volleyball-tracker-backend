@@ -130,56 +130,59 @@ public class MatchService {
         return match;
     }
     
-    // Updated edit current set score method - clears undo used flag
+    // FIXED: Updated edit current set score method - stores previous scores for complete undo
     public Match editCurrentSetScore(Long matchId, int team1Score, int team2Score, Long userId, String guestSessionId) {
-    Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
-    
-    if (match.getStatus() != MatchStatus.IN_PROGRESS) {
-        throw new RuntimeException("Cannot edit score - match is not in progress");
+        Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
+        
+        if (match.getStatus() != MatchStatus.IN_PROGRESS) {
+            throw new RuntimeException("Cannot edit score - match is not in progress");
+        }
+        
+        // Validate scores
+        if (team1Score < 0 || team2Score < 0) {
+            throw new RuntimeException("Scores cannot be negative");
+        }
+        
+        // Store previous scores for undo functionality
+        int previousTeam1Score = match.getTeam1Score();
+        int previousTeam2Score = match.getTeam2Score();
+        
+        // Check if the scores would end the set immediately
+        boolean isSetWon = false;
+        if (match.getCurrentSet() == 5) {
+            // Set 5: first to 15, win by 2
+            isSetWon = (team1Score >= 15 && team1Score - team2Score >= 2) || 
+                      (team2Score >= 15 && team2Score - team1Score >= 2);
+        } else {
+            // Sets 1-4: first to 25, win by 2
+            isSetWon = (team1Score >= 25 && team1Score - team2Score >= 2) || 
+                      (team2Score >= 25 && team2Score - team1Score >= 2);
+        }
+        
+        // Update scores
+        match.setTeam1Score(team1Score);
+        match.setTeam2Score(team2Score);
+        
+        // Store the previous scores in the match for undo functionality
+        // We'll add new fields to the Match entity to store these
+        match.setPreviousTeam1Score(previousTeam1Score);
+        match.setPreviousTeam2Score(previousTeam2Score);
+        
+        // Mark that an edit operation occurred
+        match.setLastScoringTeam("EDIT_OPERATION");
+        match.setLastScoreTime(LocalDateTime.now());
+        
+        // Clear undo used flag when scores are edited
+        match.setUndoUsed(false);
+        
+        // If the edited scores would win the set, complete it
+        if (isSetWon) {
+            completeSet(match);
+        }
+        
+        return matchRepository.save(match);
     }
     
-    // Validate scores
-    if (team1Score < 0 || team2Score < 0) {
-        throw new RuntimeException("Scores cannot be negative");
-    }
-    
-    // Check if the scores would end the set immediately
-    boolean isSetWon = false;
-    if (match.getCurrentSet() == 5) {
-        // Set 5: first to 15, win by 2
-        isSetWon = (team1Score >= 15 && team1Score - team2Score >= 2) || 
-                  (team2Score >= 15 && team2Score - team1Score >= 2);
-    } else {
-        // Sets 1-4: first to 25, win by 2
-        isSetWon = (team1Score >= 25 && team1Score - team2Score >= 2) || 
-                  (team2Score >= 25 && team2Score - team1Score >= 2);
-    }
-    
-    // Update scores
-    match.setTeam1Score(team1Score);
-    match.setTeam2Score(team2Score);
-    
-    // Determine who likely scored last based on the higher score
-    if (team1Score > team2Score) {
-        match.setLastScoringTeam("team1");
-    } else if (team2Score > team1Score) {
-        match.setLastScoringTeam("team2");
-    } else {
-        match.setLastScoringTeam(null); // Tied, unclear who scored last
-    }
-    
-    match.setLastScoreTime(LocalDateTime.now());
-    
-    // Clear undo used flag when scores are edited
-    match.setUndoUsed(false);
-    
-    // If the edited scores would win the set, complete it
-    if (isSetWon) {
-        completeSet(match);
-    }
-    
-    return matchRepository.save(match);
-}
     // Edit a completed set
     public Match editCompletedSet(Long matchId, int setNumber, int team1Points, int team2Points, 
                                  Long userId, String guestSessionId) {
@@ -282,6 +285,10 @@ public class MatchService {
         // Update last score time
         match.setLastScoreTime(LocalDateTime.now());
 
+        // Clear previous scores when new points are scored normally
+        match.setPreviousTeam1Score(null);
+        match.setPreviousTeam2Score(null);
+
         // IMPORTANT: Clear undo used flag when a new point is scored
         match.setUndoUsed(false);
 
@@ -350,76 +357,96 @@ public class MatchService {
             // Clear tracking for new set
             match.setLastScoringTeam(null);
             match.setUndoUsed(false); // Clear undo used flag for new set
+            match.setPreviousTeam1Score(null);
+            match.setPreviousTeam2Score(null);
             System.out.println("Starting set " + match.getCurrentSet());
         }
     }
 
-    // Updated undo method - now sets undo used flag
+    // FIXED: Updated undo method - now handles both regular points and edit operations
     public Match undoLastPoint(Long matchId, Long userId, String guestSessionId) {
-    Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
-    
-    if (match.getStatus() != MatchStatus.IN_PROGRESS) {
-        throw new RuntimeException("Cannot undo - match is not in progress");
-    }
-    
-    // Check if undo was already used
-    if (Boolean.TRUE.equals(match.getUndoUsed())) {
-        throw new RuntimeException("Undo already used. Score a point to enable undo again.");
-    }
-    
-    // Check if there are any points to undo
-    if (match.getTeam1Score() == 0 && match.getTeam2Score() == 0) {
-        throw new RuntimeException("No points to undo");
-    }
-    
-    // Simple logic: Only undo if we know who scored last
-    if (match.getLastScoringTeam() == null) {
-        throw new RuntimeException("Cannot undo - last scoring team unknown. Use 'Edit Score' instead.");
-    }
-    
-    // Undo the last point from the team that scored it
-    if ("team1".equals(match.getLastScoringTeam())) {
-        if (match.getTeam1Score() > 0) {
-            match.setTeam1Score(match.getTeam1Score() - 1);
-        } else {
-            throw new RuntimeException("Cannot undo - Team 1 has no points to remove");
+        Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
+        
+        if (match.getStatus() != MatchStatus.IN_PROGRESS) {
+            throw new RuntimeException("Cannot undo - match is not in progress");
         }
-    } else if ("team2".equals(match.getLastScoringTeam())) {
-        if (match.getTeam2Score() > 0) {
-            match.setTeam2Score(match.getTeam2Score() - 1);
-        } else {
-            throw new RuntimeException("Cannot undo - Team 2 has no points to remove");
+        
+        // Check if undo was already used
+        if (Boolean.TRUE.equals(match.getUndoUsed())) {
+            throw new RuntimeException("Undo already used. Score a point to enable undo again.");
         }
+        
+        // Check if there are any points to undo
+        if (match.getTeam1Score() == 0 && match.getTeam2Score() == 0) {
+            throw new RuntimeException("No points to undo");
+        }
+        
+        // Handle undo for edit operations
+        if ("EDIT_OPERATION".equals(match.getLastScoringTeam())) {
+            // Revert to previous scores
+            if (match.getPreviousTeam1Score() != null && match.getPreviousTeam2Score() != null) {
+                match.setTeam1Score(match.getPreviousTeam1Score());
+                match.setTeam2Score(match.getPreviousTeam2Score());
+                
+                // Clear the previous scores
+                match.setPreviousTeam1Score(null);
+                match.setPreviousTeam2Score(null);
+                match.setLastScoringTeam(null);
+            } else {
+                throw new RuntimeException("Cannot undo - previous scores not available");
+            }
+        } 
+        // Handle undo for regular point scoring
+        else if (match.getLastScoringTeam() != null) {
+            // Undo the last point from the team that scored it
+            if ("team1".equals(match.getLastScoringTeam())) {
+                if (match.getTeam1Score() > 0) {
+                    match.setTeam1Score(match.getTeam1Score() - 1);
+                } else {
+                    throw new RuntimeException("Cannot undo - Team 1 has no points to remove");
+                }
+            } else if ("team2".equals(match.getLastScoringTeam())) {
+                if (match.getTeam2Score() > 0) {
+                    match.setTeam2Score(match.getTeam2Score() - 1);
+                } else {
+                    throw new RuntimeException("Cannot undo - Team 2 has no points to remove");
+                }
+            }
+            
+            // After undo, we don't know who scored before, so clear the tracking
+            match.setLastScoringTeam(null);
+        } else {
+            throw new RuntimeException("Cannot undo - last scoring team unknown. Use 'Edit Score' instead.");
+        }
+
+        // Mark that undo has been used
+        match.setUndoUsed(true);
+        match.setLastScoreTime(LocalDateTime.now());
+
+        return matchRepository.save(match);
     }
 
-    // Mark that undo has been used
-    match.setUndoUsed(true);
+    // Updated reset current set method - clears undo used flag
+    public Match resetCurrentSet(Long matchId, Long userId, String guestSessionId) {
+        Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
 
-    // After undo, we don't know who scored before, so clear the tracking
-    match.setLastScoringTeam(null);
-    match.setLastScoreTime(LocalDateTime.now());
+        if (match.getStatus() != MatchStatus.IN_PROGRESS) {
+            throw new RuntimeException("Cannot reset - match is not in progress");
+        }
 
-    return matchRepository.save(match);
-}
+        match.setTeam1Score(0);
+        match.setTeam2Score(0);
+        match.setLastScoringTeam(null); // Clear last scoring team
+        match.setLastScoreTime(LocalDateTime.now());
 
-// Updated reset current set method - clears undo used flag
-public Match resetCurrentSet(Long matchId, Long userId, String guestSessionId) {
-    Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
-
-    if (match.getStatus() != MatchStatus.IN_PROGRESS) {
-        throw new RuntimeException("Cannot reset - match is not in progress");
+        // Clear undo used flag when set is reset
+        match.setUndoUsed(false);
+        match.setPreviousTeam1Score(null);
+        match.setPreviousTeam2Score(null);
+        
+        return matchRepository.save(match);
     }
-
-    match.setTeam1Score(0);
-    match.setTeam2Score(0);
-    match.setLastScoringTeam(null); // Clear last scoring team
-    match.setLastScoreTime(LocalDateTime.now());
-
-    // Clear undo used flag when set is reset
-    match.setUndoUsed(false);
     
-    return matchRepository.save(match);
-}
     // Get match by ID with ownership verification
     public Match getMatchById(Long matchId, Long userId, String guestSessionId) {
         return verifyMatchOwnership(matchId, userId, guestSessionId);
