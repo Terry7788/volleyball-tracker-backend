@@ -40,6 +40,20 @@ public class Match {
     
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    
+@Column
+private Boolean undoUsed = false; // Tracks if undo was used for the current state
+
+// Add getter and setter:
+public Boolean getUndoUsed() {
+    return undoUsed;
+}
+
+public void setUndoUsed(Boolean undoUsed) {
+    this.undoUsed = undoUsed;
+}
+
     
     // NEW FIELDS FOR UNDO TRACKING
     @Column
