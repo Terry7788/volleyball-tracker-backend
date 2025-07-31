@@ -130,6 +130,54 @@ public class MatchService {
         return match;
     }
     
+    // NEW: Edit current set scores directly
+    public Match editCurrentSetScore(Long matchId, int team1Score, int team2Score, Long userId, String guestSessionId) {
+        Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
+        
+        if (match.getStatus() != MatchStatus.IN_PROGRESS) {
+            throw new RuntimeException("Cannot edit score - match is not in progress");
+        }
+        
+        // Validate scores
+        if (team1Score < 0 || team2Score < 0) {
+            throw new RuntimeException("Scores cannot be negative");
+        }
+        
+        // Check if the scores would end the set immediately
+        boolean isSetWon = false;
+        if (match.getCurrentSet() == 5) {
+            // Set 5: first to 15, win by 2
+            isSetWon = (team1Score >= 15 && team1Score - team2Score >= 2) || 
+                      (team2Score >= 15 && team2Score - team1Score >= 2);
+        } else {
+            // Sets 1-4: first to 25, win by 2
+            isSetWon = (team1Score >= 25 && team1Score - team2Score >= 2) || 
+                      (team2Score >= 25 && team2Score - team1Score >= 2);
+        }
+        
+        // Update scores
+        match.setTeam1Score(team1Score);
+        match.setTeam2Score(team2Score);
+        
+        // Determine who likely scored last based on the higher score
+        if (team1Score > team2Score) {
+            match.setLastScoringTeam("team1");
+        } else if (team2Score > team1Score) {
+            match.setLastScoringTeam("team2");
+        } else {
+            match.setLastScoringTeam(null); // Tied, unclear who scored last
+        }
+        
+        match.setLastScoreTime(LocalDateTime.now());
+        
+        // If the edited scores would win the set, complete it
+        if (isSetWon) {
+            completeSet(match);
+        }
+        
+        return matchRepository.save(match);
+    }
+    
     // Edit a completed set
     public Match editCompletedSet(Long matchId, int setNumber, int team1Points, int team2Points, 
                                  Long userId, String guestSessionId) {
@@ -210,7 +258,7 @@ public class MatchService {
         }
     }
     
-    // Update score and handle volleyball rules - FIXED VERSION
+    // Update score and handle volleyball rules
     public Match updateScore(Long matchId, String team, Long userId, String guestSessionId) {
         Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
         
@@ -300,7 +348,7 @@ public class MatchService {
         }
     }
     
-    // FIXED: Undo last point - now properly tracks who scored last
+    // SIMPLIFIED: Undo last point - only undoes the last scoring team's point
     public Match undoLastPoint(Long matchId, Long userId, String guestSessionId) {
         Match match = verifyMatchOwnership(matchId, userId, guestSessionId);
         
@@ -313,67 +361,29 @@ public class MatchService {
             throw new RuntimeException("No points to undo");
         }
         
-        // Check if we know who scored the last point
+        // Simple logic: Only undo if we know who scored last
         if (match.getLastScoringTeam() == null) {
-            // Fallback logic for matches created before the fix
-            // This is an improved fallback - still not perfect but better than the original
-            if (match.getTeam1Score() > match.getTeam2Score() && match.getTeam1Score() > 0) {
-                // Team1 has more points, likely they scored last
+            throw new RuntimeException("Cannot undo - last scoring team unknown. Use 'Edit Score' instead.");
+        }
+        
+        // Undo the last point from the team that scored it
+        if ("team1".equals(match.getLastScoringTeam())) {
+            if (match.getTeam1Score() > 0) {
                 match.setTeam1Score(match.getTeam1Score() - 1);
-                // Set the other team as likely previous scorer
-                match.setLastScoringTeam(match.getTeam1Score() >= match.getTeam2Score() ? "team1" : "team2");
-            } else if (match.getTeam2Score() > match.getTeam1Score() && match.getTeam2Score() > 0) {
-                // Team2 has more points, likely they scored last
-                match.setTeam2Score(match.getTeam2Score() - 1);
-                // Set the other team as likely previous scorer
-                match.setLastScoringTeam(match.getTeam2Score() >= match.getTeam1Score() ? "team2" : "team1");
             } else {
-                // Scores are tied - we have to guess, undo team1 by default
-                if (match.getTeam1Score() > 0) {
-                    match.setTeam1Score(match.getTeam1Score() - 1);
-                    match.setLastScoringTeam("team2");
-                } else if (match.getTeam2Score() > 0) {
-                    match.setTeam2Score(match.getTeam2Score() - 1);
-                    match.setLastScoringTeam("team1");
-                }
+                throw new RuntimeException("Cannot undo - Team 1 has no points to remove");
             }
-        } else {
-            // Proper undo - remove point from the team that actually scored last
-            if ("team1".equals(match.getLastScoringTeam()) && match.getTeam1Score() > 0) {
-                match.setTeam1Score(match.getTeam1Score() - 1);
-                
-                // Determine who likely scored before this point
-                if (match.getTeam1Score() == 0 && match.getTeam2Score() == 0) {
-                    match.setLastScoringTeam(null); // No previous points
-                } else if (match.getTeam1Score() < match.getTeam2Score()) {
-                    match.setLastScoringTeam("team2"); // Team2 now has more points
-                } else if (match.getTeam1Score() > match.getTeam2Score()) {
-                    match.setLastScoringTeam("team1"); // Team1 still has more points
-                } else {
-                    // Scores are now tied - unclear who scored before, assume other team
-                    match.setLastScoringTeam("team2");
-                }
-                
-            } else if ("team2".equals(match.getLastScoringTeam()) && match.getTeam2Score() > 0) {
+        } else if ("team2".equals(match.getLastScoringTeam())) {
+            if (match.getTeam2Score() > 0) {
                 match.setTeam2Score(match.getTeam2Score() - 1);
-                
-                // Determine who likely scored before this point
-                if (match.getTeam1Score() == 0 && match.getTeam2Score() == 0) {
-                    match.setLastScoringTeam(null); // No previous points
-                } else if (match.getTeam2Score() < match.getTeam1Score()) {
-                    match.setLastScoringTeam("team1"); // Team1 now has more points
-                } else if (match.getTeam2Score() > match.getTeam1Score()) {
-                    match.setLastScoringTeam("team2"); // Team2 still has more points
-                } else {
-                    // Scores are now tied - unclear who scored before, assume other team
-                    match.setLastScoringTeam("team1");
-                }
             } else {
-                throw new RuntimeException("Cannot undo - inconsistent state");
+                throw new RuntimeException("Cannot undo - Team 2 has no points to remove");
             }
         }
         
-        // Update last score time
+        // After undo, we don't know who scored before, so clear the tracking
+        // This means undo only works for the very last point
+        match.setLastScoringTeam(null);
         match.setLastScoreTime(LocalDateTime.now());
         
         return matchRepository.save(match);

@@ -190,6 +190,42 @@ public class MatchController {
         }
     }
     
+    // NEW: Edit current set score endpoint
+    @PutMapping("/{id}/edit-score")
+    public ResponseEntity<Match> editCurrentSetScore(
+            @PathVariable Long id, 
+            @RequestBody EditScoreRequest request,
+            HttpServletRequest httpRequest) {
+        try {
+            UserContext context = getUserContext(httpRequest);
+            
+            if (!context.isAuthenticated && !context.isGuest) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            }
+            
+            Match match = matchService.editCurrentSetScore(
+                id, 
+                request.getTeam1Score(), 
+                request.getTeam2Score(),
+                context.userId,
+                context.guestSessionId
+            );
+            return ResponseEntity.ok(match);
+        } catch (RuntimeException e) {
+            System.out.println("Error editing current set score: " + e.getMessage());
+            if (e.getMessage().contains("not found")) {
+                return ResponseEntity.notFound().build();
+            } else if (e.getMessage().contains("Unauthorized")) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            System.out.println("Unexpected error: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
     // Undo last point
     @PutMapping("/{id}/undo")
     public ResponseEntity<Match> undoLastPoint(@PathVariable Long id, HttpServletRequest request) {
@@ -407,6 +443,30 @@ public class MatchController {
         
         public void setTeam2Points(int team2Points) {
             this.team2Points = team2Points;
+        }
+    }
+    
+    // NEW: DTO for edit current score request
+    public static class EditScoreRequest {
+        private int team1Score;
+        private int team2Score;
+        
+        public EditScoreRequest() {}
+        
+        public int getTeam1Score() {
+            return team1Score;
+        }
+        
+        public void setTeam1Score(int team1Score) {
+            this.team1Score = team1Score;
+        }
+        
+        public int getTeam2Score() {
+            return team2Score;
+        }
+        
+        public void setTeam2Score(int team2Score) {
+            this.team2Score = team2Score;
         }
     }
 }
